@@ -5,12 +5,11 @@ spring:
   datasource:
     url: "jdbc:mysql://localhost:3306/liquidation_engine"
     username: root
-    password: NewPassword123!
+    password: root
 
-    data:
-      mongodb:
-        uri: mongodb://localhost:27017/liquidationdb
-
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/liquidationdb
 
   jpa:
     hibernate:

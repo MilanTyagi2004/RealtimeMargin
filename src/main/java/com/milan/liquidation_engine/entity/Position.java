@@ -1,11 +1,18 @@
 package com.milan.liquidation_engine.entity;
 
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import jakarta.persistence.*;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.JoinColumn;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "positions")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class Position {
 
     @Id
@@ -14,19 +21,25 @@ public class Position {
 
     private String instrument;
 
-    private String direction;
+    private String direction; // "LONG" or "SHORT"
 
-    private Double quantity;
+    @Column(precision = 18, scale = 4)
+    private BigDecimal quantity;
 
-    private Double entryPrice;
+    @Column(precision = 18, scale = 4)
+    private BigDecimal entryPrice;
 
-    private Double markPrice;
+    @Column(precision = 18, scale = 4)
+    private BigDecimal markPrice;
 
-    private Double pnl;
+    @Column(precision = 18, scale = 4)
+    private BigDecimal pnl;
 
-    private Double marginUsed;
+    @Column(precision = 18, scale = 4)
+    private BigDecimal marginUsed;
 
-    private Double liquidationPrice;
+    @Column(precision = 18, scale = 4)
+    private BigDecimal liquidationPrice;
 
     @ManyToOne
     @JoinColumn(name = "user_id")
