@@ -8,6 +8,7 @@ import com.milan.liquidation_engine.service.MarginService;
 import com.milan.liquidation_engine.service.RiskThresholdService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,9 +26,13 @@ public class UserController {
     private final MarginService marginService;
     private final RiskThresholdService riskThresholdService;
     private final AuditLogService auditLogService;
+    private final PasswordEncoder passwordEncoder;
 
     @PostMapping
     public ResponseEntity<User> createUser(@RequestBody User user) {
+        if (user.getPassword() != null) {
+            user.setPassword(passwordEncoder.encode(user.getPassword()));
+        }
         if (user.getBalance() == null) {
             user.setBalance(BigDecimal.ZERO);
         }
