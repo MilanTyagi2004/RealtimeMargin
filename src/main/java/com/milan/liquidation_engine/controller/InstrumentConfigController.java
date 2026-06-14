@@ -4,6 +4,7 @@ import com.milan.liquidation_engine.dto.InstrumentConfigRequest;
 import com.milan.liquidation_engine.entity.InstrumentConfig;
 import com.milan.liquidation_engine.repository.InstrumentConfigRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,6 +18,7 @@ public class InstrumentConfigController {
     private final InstrumentConfigRepository configRepository;
 
     @PostMapping
+    @CacheEvict(value = "instrumentConfigs", key = "#request.instrument")
     public ResponseEntity<InstrumentConfig> saveConfig(@RequestBody InstrumentConfigRequest request) {
         InstrumentConfig config = configRepository.findByInstrument(request.getInstrument())
                 .orElse(new InstrumentConfig());

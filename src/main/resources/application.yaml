@@ -10,7 +10,13 @@ spring:
     username: root
     password: root
 
+  cache:
+    type: redis
+
   data:
+    redis:
+      host: localhost
+      port: 6379
     mongodb:
       uri: mongodb://localhost:27017/liquidationdb
 

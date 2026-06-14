@@ -6,6 +6,7 @@ import com.milan.liquidation_engine.repository.PositionRepository;
 import com.milan.liquidation_engine.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,10 +24,18 @@ public class MtmService {
     private final RiskThresholdService riskThresholdService;
     private final LiquidationService liquidationService;
     private final AuditLogService auditLogService;
+    private final StringRedisTemplate redisTemplate;
 
     @Transactional
     public void updateMarkPrice(String instrument, BigDecimal newMarkPrice) {
         log.info("MTM price update received for instrument: {}, price: {}", instrument, newMarkPrice);
+
+        // Cache the latest mark price in Redis for fast global access
+        try {
+            redisTemplate.opsForValue().set("markPrice:" + instrument, newMarkPrice.toString());
+        } catch (RuntimeException e) {
+            log.warn("Failed to cache mark price in Redis for {}: {}", instrument, e.getMessage());
+        }
 
         List<Position> positions = positionRepository.findByInstrument(instrument);
         if (positions.isEmpty()) {

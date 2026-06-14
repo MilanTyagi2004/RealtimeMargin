@@ -18,4 +18,9 @@ public class UserProfileController {
 
         return service.saveProfile(profile);
     }
+
+    @GetMapping("/user/{userId}")
+    public UserProfile getProfile(@PathVariable Long userId) {
+        return service.getProfileByUserId(userId);
+    }
 }

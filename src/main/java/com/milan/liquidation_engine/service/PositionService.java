@@ -26,6 +26,7 @@ public class PositionService {
     private final MarginService marginService;
     private final RiskThresholdService riskThresholdService;
     private final AuditLogService auditLogService;
+    private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
 
     private static final BigDecimal MAX_SLIPPAGE_RATE = new BigDecimal("0.01"); // 1%
 
@@ -66,11 +67,26 @@ public class PositionService {
         }
 
         // 3. Execution Safety - Slippage Check
-        // Set a mark price for simulation (if no positions, we set it to proposedPrice, else use existing mark price)
-        BigDecimal currentMarkPrice = proposedPrice; // fallback
+        // Try fetching the global mark price from Redis cache first
+        BigDecimal currentMarkPrice = null;
+        try {
+            String cachedPrice = redisTemplate.opsForValue().get("markPrice:" + instrument);
+            if (cachedPrice != null) {
+                currentMarkPrice = new BigDecimal(cachedPrice);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to retrieve cached mark price from Redis for {}: {}", instrument, e.getMessage());
+        }
+
         Optional<Position> existingPosOpt = positionRepository.findByUserAndInstrument(user, instrument);
-        if (existingPosOpt.isPresent()) {
-            currentMarkPrice = existingPosOpt.get().getMarkPrice();
+
+        if (currentMarkPrice == null) {
+            // Fallback to checking the user's existing position or proposed price
+            if (existingPosOpt.isPresent()) {
+                currentMarkPrice = existingPosOpt.get().getMarkPrice();
+            } else {
+                currentMarkPrice = proposedPrice;
+            }
         }
 
         BigDecimal priceDiff = proposedPrice.subtract(currentMarkPrice).abs();
