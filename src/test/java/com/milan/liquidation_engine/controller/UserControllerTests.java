@@ -12,6 +12,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import com.milan.liquidation_engine.security.JwtUtil;
+
 import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -24,6 +26,7 @@ public class UserControllerTests {
     private RiskThresholdService riskThresholdService;
     private AuditLogService auditLogService;
     private PasswordEncoder passwordEncoder;
+    private JwtUtil jwtUtil;
 
     private UserController userController;
 
@@ -34,13 +37,15 @@ public class UserControllerTests {
         riskThresholdService = mock(RiskThresholdService.class);
         auditLogService = mock(AuditLogService.class);
         passwordEncoder = new BCryptPasswordEncoder();
+        jwtUtil = mock(JwtUtil.class);
 
         userController = new UserController(
                 userRepository,
                 marginService,
                 riskThresholdService,
                 auditLogService,
-                passwordEncoder
+                passwordEncoder,
+                jwtUtil
         );
     }
 

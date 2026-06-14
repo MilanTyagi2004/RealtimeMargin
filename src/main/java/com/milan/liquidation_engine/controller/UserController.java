@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import com.milan.liquidation_engine.security.JwtUtil;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -27,6 +28,7 @@ public class UserController {
     private final RiskThresholdService riskThresholdService;
     private final AuditLogService auditLogService;
     private final PasswordEncoder passwordEncoder;
+    private final JwtUtil jwtUtil;
 
     @PostMapping
     public ResponseEntity<User> createUser(@RequestBody User user) {
@@ -41,6 +43,31 @@ public class UserController {
         User saved = userRepository.save(user);
         auditLogService.logEvent(saved.getId(), "USER_CREATED", "SUCCESS", "User created with username: " + saved.getUsername());
         return ResponseEntity.ok(saved);
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<Map<String, String>> login(@RequestBody Map<String, String> request) {
+        String username = request.get("username");
+        String password = request.get("password");
+
+        if (username == null || password == null) {
+            throw new IllegalArgumentException("Username and password must be provided.");
+        }
+
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid username or password"));
+
+        if (!passwordEncoder.matches(password, user.getPassword())) {
+            throw new IllegalArgumentException("Invalid username or password");
+        }
+
+        String token = jwtUtil.generateToken(user.getUsername());
+
+        Map<String, String> response = new HashMap<>();
+        response.put("token", token);
+        response.put("username", user.getUsername());
+
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/deposit")
