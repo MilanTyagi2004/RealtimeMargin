@@ -30,6 +30,7 @@ public class SecurityConfig {
                 .requestMatchers("/users").permitAll()
                 .requestMatchers("/users/login").permitAll()
                 .requestMatchers("/v1/health").permitAll()
+                .requestMatchers("/v1/stress", "/v1/stress/**").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)

@@ -6,6 +6,7 @@ import com.milan.liquidation_engine.entity.User;
 import com.milan.liquidation_engine.repository.InstrumentConfigRepository;
 import com.milan.liquidation_engine.repository.PositionRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -18,6 +19,7 @@ public class MarginService {
 
     private final InstrumentConfigRepository instrumentConfigRepository;
     private final PositionRepository positionRepository;
+    private final StringRedisTemplate redisTemplate;
 
     private static final int PRECISION = 8;
     private static final int DISPLAY_PRECISION = 4;
@@ -46,7 +48,32 @@ public class MarginService {
         BigDecimal posValue = calculatePositionValue(position);
         // Volatility support: adjusts margin rate based on volatility
         BigDecimal baseRate = config.getInitialMarginRate();
-        BigDecimal volatilityAdj = config.getVolatility();
+        
+        // Fetch dynamic volatility from Redis
+        BigDecimal dynamicVol = config.getVolatility();
+        try {
+            String cachedVol = redisTemplate.opsForValue().get("dynamicVolatility:" + config.getInstrument());
+            if (cachedVol != null) {
+                dynamicVol = new BigDecimal(cachedVol);
+            }
+        } catch (Exception e) {
+            // fallback gracefully
+        }
+
+        // Fetch market stress level multiplier
+        BigDecimal stressMultiplier = BigDecimal.ONE;
+        try {
+            String stressLevel = redisTemplate.opsForValue().get("marketStressLevel");
+            if ("HIGH_VOLATILITY".equalsIgnoreCase(stressLevel)) {
+                stressMultiplier = new BigDecimal("2.0");
+            } else if ("EXTREME_PANIC".equalsIgnoreCase(stressLevel)) {
+                stressMultiplier = new BigDecimal("3.0");
+            }
+        } catch (Exception e) {
+            // fallback gracefully
+        }
+
+        BigDecimal volatilityAdj = dynamicVol.multiply(stressMultiplier);
         BigDecimal effectiveRate = baseRate.add(volatilityAdj);
 
         // Concentration Risk adjustment: penalizes positions with high concentration of user capital

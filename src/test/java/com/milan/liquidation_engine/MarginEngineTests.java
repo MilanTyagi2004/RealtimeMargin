@@ -12,6 +12,8 @@ import com.milan.liquidation_engine.service.RiskThresholdService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import java.math.BigDecimal;
 import java.util.Arrays;
@@ -27,6 +29,7 @@ public class MarginEngineTests {
     private PositionRepository positionRepository;
     private UserRepository userRepository;
     private AuditLogService auditLogService;
+    private StringRedisTemplate redisTemplate;
 
     private MarginService marginService;
     private RiskThresholdService riskThresholdService;
@@ -37,8 +40,9 @@ public class MarginEngineTests {
         positionRepository = mock(PositionRepository.class);
         userRepository = mock(UserRepository.class);
         auditLogService = mock(AuditLogService.class);
+        redisTemplate = mock(StringRedisTemplate.class);
 
-        marginService = new MarginService(instrumentConfigRepository, positionRepository);
+        marginService = new MarginService(instrumentConfigRepository, positionRepository, redisTemplate);
         riskThresholdService = new RiskThresholdService(marginService, userRepository, auditLogService);
     }
 
@@ -155,5 +159,37 @@ public class MarginEngineTests {
         BigDecimal initialMargin = marginService.calculateInitialMargin(pos, config);
 
         assertEquals(0, initialMargin.compareTo(new BigDecimal("9.45000000")));
+    }
+
+    @Test
+    void testCalculateInitialMarginWithDynamicVolatilityAndStressLevel() {
+        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+
+        when(valueOps.get("dynamicVolatility:BTC-USD")).thenReturn("0.15000000");
+        when(valueOps.get("marketStressLevel")).thenReturn("NORMAL");
+
+        Position pos = Position.builder()
+                .quantity(new BigDecimal("10.0000"))
+                .markPrice(new BigDecimal("100.0000"))
+                .build();
+
+        InstrumentConfig config = InstrumentConfig.builder()
+                .instrument("BTC-USD")
+                .initialMarginRate(new BigDecimal("0.1000"))
+                .maintenanceMarginRate(new BigDecimal("0.0500"))
+                .volatility(new BigDecimal("0.0500"))
+                .build();
+
+        BigDecimal marginNormal = marginService.calculateInitialMargin(pos, config);
+        assertEquals(0, marginNormal.compareTo(new BigDecimal("250.00000000")));
+
+        when(valueOps.get("marketStressLevel")).thenReturn("HIGH_VOLATILITY");
+        BigDecimal marginHigh = marginService.calculateInitialMargin(pos, config);
+        assertEquals(0, marginHigh.compareTo(new BigDecimal("400.00000000")));
+
+        when(valueOps.get("marketStressLevel")).thenReturn("EXTREME_PANIC");
+        BigDecimal marginPanic = marginService.calculateInitialMargin(pos, config);
+        assertEquals(0, marginPanic.compareTo(new BigDecimal("550.00000000")));
     }
 }
