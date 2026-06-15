@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 
 @Data
 public class PriceUpdateRequest {
+    private String eventId;
     private String instrument;
     private BigDecimal markPrice;
 }

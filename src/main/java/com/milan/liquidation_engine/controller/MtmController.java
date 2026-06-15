@@ -22,7 +22,7 @@ public class MtmController {
             throw new IllegalArgumentException("Instrument and mark price must be specified.");
         }
         
-        mtmService.updateMarkPrice(request.getInstrument(), request.getMarkPrice());
+        mtmService.updateMarkPrice(request.getInstrument(), request.getMarkPrice(), request.getEventId());
 
         Map<String, Object> response = new HashMap<>();
         response.put("status", "SUCCESS");

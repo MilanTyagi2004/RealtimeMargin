@@ -16,6 +16,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import com.milan.liquidation_engine.entity.LiquidationIdempotency;
+import com.milan.liquidation_engine.repository.LiquidationIdempotencyRepository;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -37,6 +39,7 @@ public class LiquidationService {
     private final RiskThresholdService riskThresholdService;
     private final AuditLogService auditLogService;
     private final StringRedisTemplate redisTemplate;
+    private final LiquidationIdempotencyRepository liquidationIdempotencyRepository;
 
     // Simulation parameters
     private static final BigDecimal NORMAL_SLIPPAGE = new BigDecimal("0.02"); // 2%
@@ -45,7 +48,44 @@ public class LiquidationService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void liquidateAccount(Long userId, RiskThresholdService.RiskState riskState) {
-        log.warn("Initiating liquidation routine for user: {}, state: {}", userId, riskState);
+        liquidateAccount(userId, riskState, null);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void liquidateAccount(Long userId, RiskThresholdService.RiskState riskState, String eventId) {
+        if (eventId != null && !eventId.trim().isEmpty()) {
+            // 1. Redis check-and-set
+            String redisKey = "liquidationProcessed:" + eventId + ":" + userId;
+            try {
+                Boolean isNew = redisTemplate.opsForValue().setIfAbsent(redisKey, "PROCESSED", java.time.Duration.ofMinutes(10));
+                if (Boolean.FALSE.equals(isNew)) {
+                    log.warn("Duplicate liquidation request detected in Redis for user {} and event {}. Skipping.", userId, eventId);
+                    return;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to check/set liquidation key in Redis: {}. Falling back to DB check.", e.getMessage());
+            }
+
+            // 2. DB check
+            if (liquidationIdempotencyRepository.existsByEventIdAndUserId(eventId, userId)) {
+                log.warn("Duplicate liquidation request detected in DB for user {} and event {}. Skipping.", userId, eventId);
+                return;
+            }
+
+            // 3. Save DB record
+            try {
+                liquidationIdempotencyRepository.save(LiquidationIdempotency.builder()
+                        .eventId(eventId)
+                        .userId(userId)
+                        .processedAt(LocalDateTime.now())
+                        .build());
+            } catch (org.springframework.dao.DataIntegrityViolationException dive) {
+                log.warn("Duplicate liquidation record write prevented by DB unique constraint for user {} and event {}. Skipping.", userId, eventId);
+                return;
+            }
+        }
+
+        log.warn("Initiating liquidation routine for user: {}, state: {}, eventId: {}", userId, riskState, eventId);
 
         // Lock the user record
         User user = userRepository.findAndLockById(userId)

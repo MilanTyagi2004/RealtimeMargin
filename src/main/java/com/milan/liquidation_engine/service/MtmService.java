@@ -31,7 +31,12 @@ public class MtmService {
 
     @Transactional
     public void updateMarkPrice(String instrument, BigDecimal newMarkPrice) {
-        log.info("MTM price update received for instrument: {}, price: {}", instrument, newMarkPrice);
+        updateMarkPrice(instrument, newMarkPrice, null);
+    }
+
+    @Transactional
+    public void updateMarkPrice(String instrument, BigDecimal newMarkPrice, String eventId) {
+        log.info("MTM price update received for instrument: {}, price: {}, eventId: {}", instrument, newMarkPrice, eventId);
 
         // Fetch old mark price to calculate return percentage and dynamic volatility
         String oldPriceStr = null;
@@ -110,7 +115,7 @@ public class MtmService {
             if (state == RiskThresholdService.RiskState.LIQUIDATION || state == RiskThresholdService.RiskState.EMERGENCY) {
                 log.warn("Account {} is in {} state. Triggering liquidation.", lockedUser.getId(), state);
                 try {
-                    liquidationService.liquidateAccount(lockedUser.getId(), state);
+                    liquidationService.liquidateAccount(lockedUser.getId(), state, eventId);
                 } catch (Exception e) {
                     log.error("Error liquidating account {}: {}", lockedUser.getId(), e.getMessage(), e);
                     auditLogService.logEvent(lockedUser.getId(), "LIQUIDATION_FAILED", "ERROR", e.getMessage());

@@ -7,6 +7,7 @@ import com.milan.liquidation_engine.repository.InstrumentConfigRepository;
 import com.milan.liquidation_engine.repository.LiquidationEventRepository;
 import com.milan.liquidation_engine.repository.PositionRepository;
 import com.milan.liquidation_engine.repository.UserRepository;
+import com.milan.liquidation_engine.repository.LiquidationIdempotencyRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -34,6 +35,7 @@ public class LiquidationServiceTests {
     private RiskThresholdService riskThresholdService;
     private AuditLogService auditLogService;
     private StringRedisTemplate redisTemplate;
+    private LiquidationIdempotencyRepository idempotencyRepository;
 
     private LiquidationService liquidationService;
 
@@ -48,6 +50,7 @@ public class LiquidationServiceTests {
         riskThresholdService = mock(RiskThresholdService.class);
         auditLogService = mock(AuditLogService.class);
         redisTemplate = mock(StringRedisTemplate.class);
+        idempotencyRepository = mock(LiquidationIdempotencyRepository.class);
 
         liquidationService = new LiquidationService(
                 userRepository,
@@ -58,7 +61,8 @@ public class LiquidationServiceTests {
                 marginService,
                 riskThresholdService,
                 auditLogService,
-                redisTemplate
+                redisTemplate,
+                idempotencyRepository
         );
 
         ValueOperations<String, String> valueOps = mock(ValueOperations.class);

@@ -19,7 +19,7 @@ public class MtmConsumer {
         log.info("Consumed PriceUpdateRequest from Kafka: {}", request);
         try {
             if (request.getInstrument() != null && request.getMarkPrice() != null) {
-                mtmService.updateMarkPrice(request.getInstrument(), request.getMarkPrice());
+                mtmService.updateMarkPrice(request.getInstrument(), request.getMarkPrice(), request.getEventId());
             } else {
                 log.warn("Invalid PriceUpdateRequest received: {}", request);
             }
