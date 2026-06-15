@@ -12,6 +12,7 @@ import com.milan.liquidation_engine.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +36,7 @@ public class LiquidationService {
     private final MarginService marginService;
     private final RiskThresholdService riskThresholdService;
     private final AuditLogService auditLogService;
+    private final StringRedisTemplate redisTemplate;
 
     // Simulation parameters
     private static final BigDecimal NORMAL_SLIPPAGE = new BigDecimal("0.02"); // 2%
@@ -58,10 +60,8 @@ public class LiquidationService {
                 break;
             }
 
-            // Find the largest position by value
-            Position targetPos = positions.stream()
-                    .max(Comparator.comparing(pos -> marginService.calculatePositionValue(pos)))
-                    .orElse(null);
+            // Find optimal position to liquidate based on risk-weighted slippage score
+            Position targetPos = findOptimalLiquidationTarget(user, positions, riskState);
 
             if (targetPos == null) {
                 break;
@@ -79,18 +79,15 @@ public class LiquidationService {
             // Determine quantity to close
             BigDecimal quantityToClose;
             String actionType;
-            BigDecimal slippageRate;
 
             if (riskState == RiskThresholdService.RiskState.EMERGENCY) {
                 // Emergency: close entire position immediately
                 quantityToClose = targetPos.getQuantity();
                 actionType = "EMERGENCY_FULL_LIQUIDATION";
-                slippageRate = EMERGENCY_SLIPPAGE;
             } else {
                 // Normal liquidation: close 25% step
                 quantityToClose = targetPos.getQuantity().multiply(LIQUIDATION_STEP).setScale(4, RoundingMode.HALF_UP);
                 actionType = "PARTIAL_LIQUIDATION";
-                slippageRate = NORMAL_SLIPPAGE;
 
                 // If remaining quantity would be very small, close the whole position
                 BigDecimal remainingQty = targetPos.getQuantity().subtract(quantityToClose);
@@ -100,7 +97,37 @@ public class LiquidationService {
                 }
             }
 
-            // Calculate execution price considering slippage
+            // Calculate dynamic slippage rate based on position size relative to liquidity limit and volatility
+            BigDecimal baseSlippage = (riskState == RiskThresholdService.RiskState.EMERGENCY) ? EMERGENCY_SLIPPAGE : NORMAL_SLIPPAGE;
+            BigDecimal vol = config.getVolatility() != null ? config.getVolatility() : BigDecimal.ZERO;
+            try {
+                String cachedVol = redisTemplate.opsForValue().get("dynamicVolatility:" + config.getInstrument());
+                if (cachedVol != null) {
+                    vol = new BigDecimal(cachedVol);
+                }
+            } catch (Exception e) {
+                // fallback gracefully
+            }
+
+            BigDecimal sizeRatio = BigDecimal.ZERO;
+            BigDecimal targetPosValue = quantityToClose.multiply(targetPos.getMarkPrice());
+            BigDecimal liquidityLimit = config.getLiquidityLimit();
+            if (liquidityLimit != null && liquidityLimit.compareTo(BigDecimal.ZERO) > 0) {
+                sizeRatio = targetPosValue.divide(liquidityLimit, 4, RoundingMode.HALF_UP);
+            }
+
+            BigDecimal slippageRate = baseSlippage
+                    .multiply(BigDecimal.ONE.add(sizeRatio))
+                    .multiply(BigDecimal.ONE.add(vol))
+                    .setScale(4, RoundingMode.HALF_UP);
+
+            // Cap slippage at 50% max to ensure pricing stays within bounds
+            BigDecimal maxSlippage = new BigDecimal("0.50");
+            if (slippageRate.compareTo(maxSlippage) > 0) {
+                slippageRate = maxSlippage;
+            }
+
+            // Calculate execution price considering dynamic slippage
             BigDecimal markPrice = targetPos.getMarkPrice();
             BigDecimal executionPrice;
             if ("LONG".equalsIgnoreCase(targetPos.getDirection())) {
@@ -212,5 +239,72 @@ public class LiquidationService {
                 break;
             }
         }
+    }
+
+    public Position findOptimalLiquidationTarget(User user, List<Position> positions, RiskThresholdService.RiskState riskState) {
+        Position bestTarget = null;
+        BigDecimal highestScore = BigDecimal.valueOf(-Double.MAX_VALUE);
+        BigDecimal equity = marginService.calculateAccountEquity(user);
+
+        for (Position pos : positions) {
+            InstrumentConfig config = instrumentConfigRepository.findByInstrument(pos.getInstrument()).orElse(null);
+            if (config == null) {
+                continue;
+            }
+
+            BigDecimal posValue = marginService.calculatePositionValue(pos);
+            BigDecimal maintenanceMargin = marginService.calculateMaintenanceMargin(pos, config);
+
+            // 1. Base Risk Weight (Maintenance Margin)
+            BigDecimal riskWeight = maintenanceMargin;
+
+            // 2. Concentration Penalty adjustment
+            BigDecimal concentrationPenaltyMultiplier = BigDecimal.ONE;
+            if (equity.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal concentration = posValue.divide(equity, 4, RoundingMode.HALF_UP);
+                if (concentration.compareTo(new BigDecimal("0.80")) > 0) {
+                    BigDecimal excess = concentration.subtract(new BigDecimal("0.80"));
+                    // Boost risk weight based on concentration excess
+                    concentrationPenaltyMultiplier = BigDecimal.ONE.add(excess.multiply(new BigDecimal("5.0")));
+                }
+            }
+            BigDecimal effectiveRisk = riskWeight.multiply(concentrationPenaltyMultiplier);
+
+            // 3. Dynamic Slippage estimate
+            BigDecimal baseSlippage = (riskState == RiskThresholdService.RiskState.EMERGENCY) ? EMERGENCY_SLIPPAGE : NORMAL_SLIPPAGE;
+            BigDecimal vol = config.getVolatility() != null ? config.getVolatility() : BigDecimal.ZERO;
+            try {
+                String cachedVol = redisTemplate.opsForValue().get("dynamicVolatility:" + config.getInstrument());
+                if (cachedVol != null) {
+                    vol = new BigDecimal(cachedVol);
+                }
+            } catch (Exception e) {
+                // fallback gracefully
+            }
+
+            BigDecimal sizeRatio = BigDecimal.ZERO;
+            BigDecimal liquidityLimit = config.getLiquidityLimit();
+            if (liquidityLimit != null && liquidityLimit.compareTo(BigDecimal.ZERO) > 0) {
+                sizeRatio = posValue.divide(liquidityLimit, 4, RoundingMode.HALF_UP);
+            }
+
+            BigDecimal estimatedSlippage = baseSlippage
+                    .multiply(BigDecimal.ONE.add(sizeRatio))
+                    .multiply(BigDecimal.ONE.add(vol));
+
+            if (estimatedSlippage.compareTo(BigDecimal.ZERO) <= 0) {
+                estimatedSlippage = new BigDecimal("0.0001");
+            }
+
+            // Score = Effective Risk / Estimated Slippage
+            BigDecimal score = effectiveRisk.divide(estimatedSlippage, 4, RoundingMode.HALF_UP);
+
+            if (score.compareTo(highestScore) > 0) {
+                highestScore = score;
+                bestTarget = pos;
+            }
+        }
+
+        return bestTarget;
     }
 }
