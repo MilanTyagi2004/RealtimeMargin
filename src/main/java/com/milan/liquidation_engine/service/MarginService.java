@@ -21,6 +21,8 @@ public class MarginService {
 
     private static final int PRECISION = 8;
     private static final int DISPLAY_PRECISION = 4;
+    private static final BigDecimal CONCENTRATION_THRESHOLD = new BigDecimal("0.80");
+    private static final BigDecimal CONCENTRATION_PENALTY_RATE = new BigDecimal("0.05");
 
     public BigDecimal calculatePositionValue(Position position) {
         if (position.getQuantity() == null || position.getMarkPrice() == null) {
@@ -46,6 +48,20 @@ public class MarginService {
         BigDecimal baseRate = config.getInitialMarginRate();
         BigDecimal volatilityAdj = config.getVolatility();
         BigDecimal effectiveRate = baseRate.add(volatilityAdj);
+
+        // Concentration Risk adjustment: penalizes positions with high concentration of user capital
+        if (position.getUser() != null) {
+            BigDecimal equity = calculateAccountEquity(position.getUser());
+            if (equity.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal concentration = posValue.divide(equity, PRECISION, RoundingMode.HALF_UP);
+                if (concentration.compareTo(CONCENTRATION_THRESHOLD) > 0) {
+                    BigDecimal excess = concentration.subtract(CONCENTRATION_THRESHOLD);
+                    BigDecimal additionalRate = excess.multiply(CONCENTRATION_PENALTY_RATE);
+                    effectiveRate = effectiveRate.add(additionalRate);
+                }
+            }
+        }
+
         return posValue.multiply(effectiveRate);
     }
 

@@ -124,4 +124,36 @@ public class MarginEngineTests {
         pos.setMarkPrice(new BigDecimal("40.0000"));
         assertEquals(RiskThresholdService.RiskState.EMERGENCY, riskThresholdService.evaluateAccountRisk(user));
     }
+
+    @Test
+    void testCalculateInitialMarginWithConcentrationRisk() {
+        User user = User.builder()
+                .id(2L)
+                .username("concentration_user")
+                .balance(new BigDecimal("100.0000"))
+                .build();
+
+        Position pos = Position.builder()
+                .id(2L)
+                .user(user)
+                .instrument("BTC-USD")
+                .direction("LONG")
+                .quantity(new BigDecimal("0.9000"))
+                .entryPrice(new BigDecimal("100.0000"))
+                .markPrice(new BigDecimal("100.0000"))
+                .build();
+
+        InstrumentConfig config = InstrumentConfig.builder()
+                .instrument("BTC-USD")
+                .initialMarginRate(new BigDecimal("0.1000"))
+                .maintenanceMarginRate(new BigDecimal("0.0500"))
+                .volatility(BigDecimal.ZERO)
+                .build();
+
+        when(positionRepository.findByUser(user)).thenReturn(Collections.singletonList(pos));
+
+        BigDecimal initialMargin = marginService.calculateInitialMargin(pos, config);
+
+        assertEquals(0, initialMargin.compareTo(new BigDecimal("9.45000000")));
+    }
 }
