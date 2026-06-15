@@ -1,5 +1,6 @@
 package com.milan.liquidation_engine.service;
 
+import com.milan.liquidation_engine.dto.LiquidationBroadcastEvent;
 import com.milan.liquidation_engine.entity.InstrumentConfig;
 import com.milan.liquidation_engine.entity.LiquidationEvent;
 import com.milan.liquidation_engine.entity.Position;
@@ -10,6 +11,7 @@ import com.milan.liquidation_engine.repository.PositionRepository;
 import com.milan.liquidation_engine.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +30,7 @@ public class LiquidationService {
     private final UserRepository userRepository;
     private final PositionRepository positionRepository;
     private final InstrumentConfigRepository instrumentConfigRepository;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
     private final LiquidationEventRepository liquidationEventRepository;
     private final MarginService marginService;
     private final RiskThresholdService riskThresholdService;
@@ -161,6 +164,24 @@ public class LiquidationService {
                     .timestamp(LocalDateTime.now())
                     .build();
             liquidationEventRepository.save(event);
+
+            // Broadcast liquidation details asynchronously to Kafka
+            try {
+                LiquidationBroadcastEvent broadcastEvent = LiquidationBroadcastEvent.builder()
+                        .userId(user.getId())
+                        .instrument(targetPos.getInstrument())
+                        .action(actionType)
+                        .quantityLiquidated(quantityToClose)
+                        .price(executionPrice)
+                        .penalty(penalty)
+                        .reason(eventReason)
+                        .timestamp(event.getTimestamp())
+                        .build();
+                kafkaTemplate.send("liquidation-events", broadcastEvent);
+                log.info("Successfully broadcast liquidation event to Kafka for user: {}", user.getId());
+            } catch (Exception e) {
+                log.warn("Failed to broadcast liquidation event to Kafka for user {}: {}", user.getId(), e.getMessage());
+            }
 
             // Recalculate account margins
             marginService.recalculateUserPositionsAndMargin(user);
