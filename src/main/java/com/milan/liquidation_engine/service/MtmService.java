@@ -31,12 +31,93 @@ public class MtmService {
 
     @Transactional
     public void updateMarkPrice(String instrument, BigDecimal newMarkPrice) {
-        updateMarkPrice(instrument, newMarkPrice, null);
+        updateMarkPrice(instrument, newMarkPrice, null, null, null, "PRIMARY");
     }
 
     @Transactional
     public void updateMarkPrice(String instrument, BigDecimal newMarkPrice, String eventId) {
-        log.info("MTM price update received for instrument: {}, price: {}, eventId: {}", instrument, newMarkPrice, eventId);
+        updateMarkPrice(instrument, newMarkPrice, eventId, null, null, "PRIMARY");
+    }
+
+    @Transactional
+    public void updateMarkPrice(String instrument, BigDecimal newMarkPrice, String eventId, Long sequenceNumber, Long timestamp, String feedSource) {
+        log.info("MTM price update received for instrument: {}, price: {}, eventId: {}, seq: {}, ts: {}, feed: {}", 
+                instrument, newMarkPrice, eventId, sequenceNumber, timestamp, feedSource);
+
+        // 1. Duplicate market events handling (Deduplication)
+        if (eventId != null && !eventId.trim().isEmpty()) {
+            String duplicateKey = "priceEventProcessed:" + eventId;
+            Boolean isNew = redisTemplate.opsForValue().setIfAbsent(duplicateKey, "PROCESSED", java.time.Duration.ofMinutes(10));
+            if (Boolean.FALSE.equals(isNew)) {
+                log.warn("Duplicate price event detected for eventId: {}. Skipping MTM update.", eventId);
+                return;
+            }
+        }
+
+        // 2. Exchange Failover Feed check
+        String source = feedSource != null ? feedSource.toUpperCase() : "PRIMARY";
+        if ("BACKUP".equals(source)) {
+            String lastActiveStr = redisTemplate.opsForValue().get("feedLastActive:primary");
+            long currentTime = System.currentTimeMillis();
+            long lastActive = 0;
+            if (lastActiveStr != null) {
+                try {
+                    lastActive = Long.parseLong(lastActiveStr);
+                } catch (NumberFormatException e) {
+                    log.warn("Failed to parse last active timestamp for primary feed: {}", lastActiveStr);
+                }
+            }
+            // If primary is active within the last 5 seconds, skip backup feed update
+            if (currentTime - lastActive <= 5000) {
+                log.info("Primary feed is active (last active: {} ms ago). Skipping backup feed price update for {}.", 
+                        (currentTime - lastActive), instrument);
+                return;
+            } else {
+                log.warn("Primary feed inactive (last active: {} ms ago). Accepting backup feed price update for {}.", 
+                        (currentTime - lastActive), instrument);
+            }
+        } else if ("PRIMARY".equals(source)) {
+            try {
+                redisTemplate.opsForValue().set("feedLastActive:primary", String.valueOf(System.currentTimeMillis()));
+            } catch (Exception e) {
+                log.warn("Failed to update primary feed active timestamp in Redis: {}", e.getMessage());
+            }
+        }
+
+        // 3. Out-of-Order / Sequence Validation
+        if (sequenceNumber != null) {
+            String seqKey = "priceSequence:" + instrument;
+            String cachedSeqStr = redisTemplate.opsForValue().get(seqKey);
+            if (cachedSeqStr != null) {
+                try {
+                    long cachedSeq = Long.parseLong(cachedSeqStr);
+                    if (sequenceNumber <= cachedSeq) {
+                        log.warn("Out-of-order or stale price sequence received for {}. Sequence: {}, Cached Sequence: {}. Skipping.", 
+                                instrument, sequenceNumber, cachedSeq);
+                        return;
+                    }
+                } catch (NumberFormatException e) {
+                    log.warn("Failed to parse cached sequence number for {}: {}", instrument, cachedSeqStr);
+                }
+            }
+        }
+
+        if (timestamp != null) {
+            String tsKey = "priceTimestamp:" + instrument;
+            String cachedTsStr = redisTemplate.opsForValue().get(tsKey);
+            if (cachedTsStr != null) {
+                try {
+                    long cachedTs = Long.parseLong(cachedTsStr);
+                    if (timestamp <= cachedTs) {
+                        log.warn("Out-of-order or stale price timestamp received for {}. Timestamp: {}, Cached Timestamp: {}. Skipping.", 
+                                instrument, timestamp, cachedTs);
+                        return;
+                    }
+                } catch (NumberFormatException e) {
+                    log.warn("Failed to parse cached timestamp for {}: {}", instrument, cachedTsStr);
+                }
+            }
+        }
 
         // Fetch old mark price to calculate return percentage and dynamic volatility
         String oldPriceStr = null;
@@ -86,8 +167,15 @@ public class MtmService {
         // Cache the latest mark price in Redis for fast global access
         try {
             redisTemplate.opsForValue().set("markPrice:" + instrument, newMarkPrice.toString());
+            // Cache the latest sequence and timestamp in Redis
+            if (sequenceNumber != null) {
+                redisTemplate.opsForValue().set("priceSequence:" + instrument, sequenceNumber.toString());
+            }
+            if (timestamp != null) {
+                redisTemplate.opsForValue().set("priceTimestamp:" + instrument, timestamp.toString());
+            }
         } catch (RuntimeException e) {
-            log.warn("Failed to cache mark price in Redis for {}: {}", instrument, e.getMessage());
+            log.warn("Failed to cache mark price / sequence details in Redis for {}: {}", instrument, e.getMessage());
         }
 
         List<Position> positions = positionRepository.findByInstrument(instrument);

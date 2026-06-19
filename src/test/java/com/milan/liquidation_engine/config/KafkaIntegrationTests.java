@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
-@EmbeddedKafka(partitions = 1, topics = { "audit-logs", "market-data", "liquidation-events" })
+@EmbeddedKafka(partitions = 1, topics = { "audit-logs", "market-data", "market-data-backup", "liquidation-events" })
 @DirtiesContext
 public class KafkaIntegrationTests {
 

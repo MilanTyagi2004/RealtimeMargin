@@ -8,4 +8,6 @@ public class PriceUpdateRequest {
     private String eventId;
     private String instrument;
     private BigDecimal markPrice;
+    private Long sequenceNumber;
+    private Long timestamp;
 }
